@@ -2,10 +2,16 @@ from unittest.mock import patch
 
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
+import numpy as np
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .rag import RagConfigurationError, create_chunks, load_pdf_pages
+from .prediction import (
+    FEATURE_COLUMNS,
+    ONE_HOT_FEATURE_COLUMNS,
+    predict_landslide,
+)
 
 
 class LandslideObservationApiTests(APITestCase):
@@ -79,6 +85,35 @@ class LandslideObservationApiTests(APITestCase):
         self.assertIn(response.data['landslide_prediction'], ('Yes', 'No'))
         self.assertGreaterEqual(response.data['landslide_probability'], 0)
         self.assertLessEqual(response.data['landslide_probability'], 1)
+
+    @patch(
+        'observations.views.predict_landslide',
+        return_value={
+            'landslide_prediction': 'Yes',
+            'landslide_probability': 0.8,
+        },
+    )
+    def test_post_accepts_dataset_column_names(self, _predict):
+        dataset_observation = {
+            'Location_ID': 1,
+            'Max_Temp_C': 27.5,
+            'Humidity_Pct': 84.0,
+            'Wind_Speed_kmh': 12.0,
+            'Rainfall_mm': 35.5,
+            'Slope_Angle_Deg': 32,
+            'Vegetation_Cover': 'Medium',
+        }
+
+        response = self.client.post(
+            self.url,
+            dataset_observation,
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['location_id'], 1)
+        self.assertEqual(response.data['max_temp_c'], 27.5)
+        self.assertEqual(response.data['vegetation_cover'], 'Medium')
 
     @patch(
         'observations.views.predict_landslide',
@@ -194,6 +229,51 @@ class LandslideObservationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('vegetation_cover', response.data)
+
+
+class LandslidePredictionTests(SimpleTestCase):
+    observation = {
+        'max_temp_c': 27.5,
+        'humidity_pct': 84.0,
+        'wind_speed_kmh': 12.0,
+        'rainfall_mm': 35.5,
+        'slope_angle_deg': 32,
+        'vegetation_cover': 'Medium',
+    }
+
+    @patch('observations.prediction.load_model')
+    def test_predicts_using_notebook_one_hot_feature_schema(self, load_model):
+        model = load_model.return_value
+        model.feature_names_in_ = ONE_HOT_FEATURE_COLUMNS
+        model.classes_ = [0, 1]
+        model.predict.return_value = [1]
+        model.predict_proba.return_value = np.array([[0.2, 0.8]])
+
+        result = predict_landslide(self.observation)
+
+        self.assertEqual(result['landslide_prediction'], 'Yes')
+        self.assertEqual(result['landslide_probability'], 0.8)
+        model_input = model.predict.call_args.args[0]
+        self.assertEqual(tuple(model_input.columns), ONE_HOT_FEATURE_COLUMNS)
+        self.assertEqual(model_input.loc[0, 'Vegetation_Cover_Medium'], 1)
+        self.assertEqual(model_input.loc[0, 'Vegetation_Cover_High'], 0)
+        self.assertEqual(model_input.loc[0, 'Vegetation_Cover_Low'], 0)
+
+    @patch('observations.prediction.load_model')
+    def test_predicts_using_raw_feature_schema(self, load_model):
+        model = load_model.return_value
+        model.feature_names_in_ = FEATURE_COLUMNS
+        model.classes_ = [0, 1]
+        model.predict.return_value = [0]
+        model.predict_proba.return_value = np.array([[0.7, 0.3]])
+
+        result = predict_landslide(self.observation)
+
+        self.assertEqual(result['landslide_prediction'], 'No')
+        self.assertEqual(result['landslide_probability'], 0.3)
+        model_input = model.predict.call_args.args[0]
+        self.assertEqual(tuple(model_input.columns), FEATURE_COLUMNS)
+        self.assertEqual(model_input.loc[0, 'Vegetation_Cover'], 'Medium')
 
 
 class SafetyAssistantApiTests(APITestCase):

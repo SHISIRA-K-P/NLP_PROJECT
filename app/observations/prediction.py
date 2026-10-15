@@ -15,6 +15,17 @@ FEATURE_COLUMNS = (
     'Slope_Angle_Deg',
     'Vegetation_Cover',
 )
+ONE_HOT_FEATURE_COLUMNS = (
+    'Max_Temp_C',
+    'Humidity_Pct',
+    'Wind_Speed_kmh',
+    'Rainfall_mm',
+    'Slope_Angle_Deg',
+    'Vegetation_Cover_High',
+    'Vegetation_Cover_Low',
+    'Vegetation_Cover_Medium',
+)
+SUPPORTED_MODEL_FEATURES = (FEATURE_COLUMNS, ONE_HOT_FEATURE_COLUMNS)
 MODEL_PATH = (
     Path(settings.BASE_DIR).parent
     / 'notebooks'
@@ -31,14 +42,16 @@ def load_model():
 
     model = joblib.load(MODEL_PATH)
     model_features = tuple(getattr(model, 'feature_names_in_', ()))
-    if model_features != FEATURE_COLUMNS:
+    if model_features not in SUPPORTED_MODEL_FEATURES:
         raise ImproperlyConfigured(
-            'Landslide prediction model features do not match the API inputs.'
+            'Landslide prediction model has unsupported input features.'
         )
     return model
 
 
 def predict_landslide(observation):
+    model = load_model()
+    model_features = tuple(model.feature_names_in_)
     model_input = pd.DataFrame(
         [
             {
@@ -52,7 +65,13 @@ def predict_landslide(observation):
         ],
         columns=FEATURE_COLUMNS,
     )
-    model = load_model()
+    if model_features == ONE_HOT_FEATURE_COLUMNS:
+        model_input = pd.get_dummies(
+            model_input,
+            columns=['Vegetation_Cover'],
+            dtype=int,
+        ).reindex(columns=ONE_HOT_FEATURE_COLUMNS, fill_value=0)
+
     prediction = int(model.predict(model_input)[0])
     positive_class_index = list(model.classes_).index(1)
     probability = float(model.predict_proba(model_input)[0, positive_class_index])

@@ -36,6 +36,8 @@ The **input** includes the measurements below; you do not enter a landslide outc
 
 `vegetation_cover` must be `Low`, `Medium`, or `High`. The API also validates a positive location ID, humidity from 0 to 100, non-negative wind speed/rainfall, and slope angle from 0 to 90 degrees. The returned probability is the model's estimate for the positive (`Yes`) class; it is not a calibrated real-world risk measurement.
 
+The React form sends the corresponding dataset column names (`Location_ID`, `Max_Temp_C`, `Humidity_Pct`, `Wind_Speed_kmh`, `Rainfall_mm`, `Slope_Angle_Deg`, and `Vegetation_Cover`). Django maps these to the API/database field names shown in the example. Do not send `Landslide`; the server predicts that value.
+
 ## Run the frontend and backend locally (Windows)
 
 Open two terminals in VS Code. Use the project folder as the working directory in both terminals:
@@ -46,18 +48,10 @@ cd C:\Users\91904\Desktop\ksfe\AI\CODE\Django_React_AI_project\wayanad-landslide
 
 ### Terminal 1: start Django
 
-Install the Python dependencies once if they are not already installed, then apply the database migrations and start Django:
+Install the Python dependencies once if they are not already installed. Django uses MySQL by default. Start your MySQL server, create a database (for example `wayanad_landslide`), then set its connection details in the same PowerShell session before applying migrations and starting Django:
 
 ```powershell
 python -m pip install -r requirements.txt
-python app\manage.py migrate
-python app\manage.py runserver
-```
-
-The API is now available at `http://127.0.0.1:8000/api/observations/`. Django uses the SQLite database at `app/db.sqlite3` by default. To use MySQL instead, first create a database (for example `wayanad_landslide`) and set these environment variables in the same PowerShell session before running migrations and Django:
-
-```powershell
-$env:DB_ENGINE = "mysql"
 $env:DB_NAME = "wayanad_landslide"
 $env:DB_USER = "your_mysql_user"
 $env:DB_PASSWORD = "your_mysql_password"
@@ -67,7 +61,18 @@ python app\manage.py migrate
 python app\manage.py runserver
 ```
 
-The MySQL driver is `mysqlclient` (declared in `requirements.txt`). Django continues to use SQLite unless `DB_ENGINE=mysql` is set. Configure the browser origin with `CORS_ALLOWED_ORIGINS` if the React development server uses an origin other than `http://localhost:5173` or `http://127.0.0.1:5173`.
+The API is now available at `http://127.0.0.1:8000/api/observations/`. The MySQL driver is `mysqlclient` (declared in `requirements.txt`). To copy existing observation records from the old SQLite database, export them before switching the backend, then import them after creating the MySQL tables:
+
+```powershell
+$env:DB_ENGINE = "sqlite"
+python app\manage.py dumpdata observations --indent 2 --output observations.json
+$env:DB_ENGINE = "mysql"
+# Set DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, and DB_PORT as above.
+python app\manage.py migrate
+python app\manage.py loaddata observations.json
+```
+
+Keep `observations.json` as a temporary data backup and remove it after confirming the records were imported. To explicitly use SQLite for local development, set `$env:DB_ENGINE = "sqlite"` before running Django. Configure the browser origin with `CORS_ALLOWED_ORIGINS` if the React development server uses an origin other than `http://localhost:5173` or `http://127.0.0.1:5173`.
 
 ### Terminal 2: start React
 

@@ -76,17 +76,16 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database. SQLite remains the default for local development; set DB_ENGINE=mysql
-# and the DB_* variables to use the configured MySQL database.
-DB_ENGINE = os.environ.get('DB_ENGINE', 'sqlite').lower()
+# MySQL is the default; set DB_ENGINE=sqlite only for an explicit local fallback.
+DB_ENGINE = os.environ.get('DB_ENGINE', 'mysql').lower()
 
 if DB_ENGINE == 'mysql':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': os.environ.get('DB_NAME', ''),
-            'USER': os.environ.get('DB_USER', ''),
-            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'NAME': os.environ.get('DB_NAME', 'landslide_db'),
+            'USER': os.environ.get('DB_USER', 'root'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', 'Manman@123'),
             'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
             'PORT': os.environ.get('DB_PORT', '3306'),
             'OPTIONS': {'charset': 'utf8mb4'},

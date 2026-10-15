@@ -116,13 +116,13 @@ function LandslideDashboard() {
     setSubmitting(true)
 
     const payload = {
-      ...form,
-      location_id: Number(form.location_id),
-      max_temp_c: Number(form.max_temp_c),
-      humidity_pct: Number(form.humidity_pct),
-      wind_speed_kmh: Number(form.wind_speed_kmh),
-      rainfall_mm: Number(form.rainfall_mm),
-      slope_angle_deg: Number(form.slope_angle_deg),
+      Location_ID: Number(form.location_id),
+      Max_Temp_C: Number(form.max_temp_c),
+      Humidity_Pct: Number(form.humidity_pct),
+      Wind_Speed_kmh: Number(form.wind_speed_kmh),
+      Rainfall_mm: Number(form.rainfall_mm),
+      Slope_Angle_Deg: Number(form.slope_angle_deg),
+      Vegetation_Cover: form.vegetation_cover,
     }
 
     try {
