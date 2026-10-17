@@ -1,0 +1,17 @@
+[
+  {
+    "model": "observations.emergencyauthority",
+    "fields": {
+      "authority_name": "DEMO ONLY - Not an official authority",
+      "authority_type": "other",
+      "location_id": 1,
+      "district": "Demo District",
+      "email": "demo-authority@example.invalid",
+      "phone_number": "0000000000",
+      "is_active": false,
+      "is_verified": false,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  }
+]

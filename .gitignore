@@ -8,4 +8,3 @@ notebooks/wayanad_landslide_ml_baseline_harness_jev.ipynb
 notebooks/landslide_logistic_pipelines.joblib
 notebooks/a.ipynb
 frontend/.env.example
-.env.example

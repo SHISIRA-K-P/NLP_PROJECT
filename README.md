@@ -1,8 +1,8 @@
 # Wayanad Landslide Early Warning & Response System
 
-An end-to-end prototype for collecting daily landslide-monitoring data, estimating risk, sharing document-grounded safety guidance, and coordinating alerts to relevant contacts.
+An end-to-end learning prototype for collecting daily landslide-monitoring data, estimating risk, and retrieving document-grounded safety guidance.
 
-> **Project status:** The Django API and React app support creating, listing, updating, and deleting observations. Creating or updating a record runs the saved landslide model and stores its prediction and probability. A document-grounded safety assistant retrieves passages from `notebooks/Landslide_safety.pdf` using Pinecone and answers with Ollama. Automated alerts, agent workflows, email delivery, and Power BI dashboards remain future work.
+> **Project status:** The Django API and React app support creating, listing, updating, and deleting observations. Creating or updating a record runs the saved landslide model and stores its prediction and probability. For a positive prediction, the backend response agent retrieves approved safety guidance and the first emergency authority row, then prints its result in the Django server terminal. The authority table is not exposed by the observations API. Alert approval, email delivery, and Power BI dashboards are inactive/future work.
 
 ## Project objective
 
@@ -20,7 +20,7 @@ The React app has separate **New observation** and **All records** pages. Use **
 | `PUT` / `PATCH` | `/api/observations/{id}/` | Updates a reading, recalculates its prediction, and returns HTTP `200 OK`. |
 | `DELETE` | `/api/observations/{id}/` | Deletes a reading and returns HTTP `204 No Content`. |
 
-The **input** includes the measurements below; you do not enter a landslide outcome. The server uses the saved Logistic Regression pipeline at `notebooks/landslide_logistic_pipeline.joblib` to predict it. The model-generated `landslide_prediction` and `landslide_probability` are saved in the database and returned by GET. Older manually entered outcomes are retained as read-only `landslide_observed` history; it is not submitted for new records.
+The **input** includes the measurements below; you do not enter a landslide outcome. The server uses the saved landslide model at `notebooks/landslide_logistic_pipeline.joblib` to predict it. The model-generated `landslide_prediction` and `landslide_probability` are saved in the database and returned by GET. Older manually entered outcomes are retained as read-only `landslide_observed` history; it is not submitted for new records.
 
 ```json
 {
@@ -38,13 +38,92 @@ The **input** includes the measurements below; you do not enter a landslide outc
 
 The React form sends the corresponding dataset column names (`Location_ID`, `Max_Temp_C`, `Humidity_Pct`, `Wind_Speed_kmh`, `Rainfall_mm`, `Slope_Angle_Deg`, and `Vegetation_Cover`). Django maps these to the API/database field names shown in the example. Do not send `Landslide`; the server predicts that value.
 
+## Landslide prediction follow-up
+
+When a saved or updated observation is predicted as `Yes`, Django starts
+`run_landslide_response_agent(observation_id)` in a background thread after the
+database transaction commits. The prediction and observation are saved before
+the response is returned, so the POST/PUT response and subsequent GET requests
+do not wait for the response agent. The agent loads the saved observation,
+then gives the configured local Ollama model three backend tools:
+`retrieve_safety_measures()` (the existing RAG assistant) and
+`get_emergency_contact()` (a Django ORM lookup for the first authority ordered
+by `authority_name`, then `id`). The query does not filter location, active or
+verified status, or blank contact details. The same agent then invokes
+`send_emergency_email()` when that contact has a valid email. Django controls
+the strict tool order (safety retrieval, contact lookup, email) and ignores
+model-supplied tool arguments; email content and recipient are built from the
+saved observation, RAG result, and backend lookup. The contact details are not
+sent to Ollama. When prediction is `No`, no agent tools run.
+
+Email delivery is **dry-run by default**. The agent returns an email preview
+and `email_status: "dry_run"` without contacting SMTP. To enable actual sending
+after verifying the SMTP configuration and contact, set
+`LANDSLIDE_EMAIL_DRY_RUN=false` in the project-root `.env` and restart Django.
+The final agent result reports `sent` only if Django's mail backend reports
+exactly one message sent; SMTP errors and unsuccessful send counts are reported
+as `failed`, while absent/invalid contact email is reported as skipped. No
+email, SMS, or public alert is sent for a `No` prediction.
+
+The agent prints and returns results in the Django server process; they are not
+included in the public API response. Agent failures are logged by Django and do
+not undo the saved prediction. This process-local background execution is
+intended for this learning prototype; use a durable task queue for production
+deployments where tasks must survive server restarts.
+
+Install/start Ollama and fetch the configured model before using the agent:
+
+```powershell
+ollama pull qwen2.5:3b
+```
+
+Set `OLLAMA_MODEL` in the project-root `.env` if you want to use another
+installed Ollama model that supports tool calling. If Ollama is unavailable or
+does not call the required tool, the saved prediction is still returned
+immediately and the failure is logged by Django.
+
+Manage `EmergencyAuthority` records in Django Admin. The proof-of-concept
+lookup uses only the first record even if it is inactive, unverified, or has
+blank contact fields. Confirm details before relying on them. This is a
+learning project, not an official warning system.
+
+To add the clearly marked dummy record for local testing, run this from the
+project root after migrations:
+
+```powershell
+python app\manage.py loaddata demo_emergency_authorities
+```
+
+It uses an `.invalid` email, a dummy phone number, and inactive/unverified
+flags. It can be returned as the first contact but its invalid email prevents
+delivery. It must never be used as a real authority contact.
+
+### Test the active behavior
+
+Run the focused Django tests from the project root after installing `requirements.txt`:
+
+```powershell
+$env:DB_ENGINE = "sqlite"
+$env:DJANGO_SECRET_KEY = "test-only-key-do-not-use-in-production"
+python app\manage.py test observations.tests.LandslideResponseSelectionTests observations.tests.LandslideObservationApiTests observations.tests.LandslidePredictionTests
+```
+
+These tests mock the safety assistant and SMTP; email tests cover dry-run,
+successful delivery results, and send failures without sending real email.
+
 ## Run the frontend and backend locally (Windows)
 
 Open two terminals in VS Code. Use the project folder as the working directory in both terminals:
 
 ```powershell
 cd C:\Users\91904\Desktop\ksfe\AI\CODE\Django_React_AI_project\wayanad-landslide-early-warning-system
+Copy-Item .env.example .env
 ```
+
+Fill in the private values in `.env` (Django secret, MySQL, Pinecone, and SMTP
+credentials). For Gmail SMTP, use a Google app password rather than your
+account password. Keep `.env` private and do not commit it; `.env.example`
+contains placeholders only.
 
 ### Terminal 1: start Django
 
@@ -52,6 +131,7 @@ Install the Python dependencies once if they are not already installed. Django u
 
 ```powershell
 python -m pip install -r requirements.txt
+$env:DJANGO_SECRET_KEY = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
 $env:DB_NAME = "wayanad_landslide"
 $env:DB_USER = "your_mysql_user"
 $env:DB_PASSWORD = "your_mysql_password"
@@ -61,7 +141,7 @@ python app\manage.py migrate
 python app\manage.py runserver
 ```
 
-The API is now available at `http://127.0.0.1:8000/api/observations/`. The MySQL driver is `mysqlclient` (declared in `requirements.txt`). To copy existing observation records from the old SQLite database, export them before switching the backend, then import them after creating the MySQL tables:
+That command generates a fresh key for the current terminal session. For a persistent local setup, store a private random `DJANGO_SECRET_KEY` in the ignored project-root `.env` file instead of regenerating it on each run. Keep the key and all database/SMTP passwords out of source control. Django reads that `.env` file as well as the process environment. The API is now available at `http://127.0.0.1:8000/api/observations/`. The MySQL driver is `mysqlclient` (declared in `requirements.txt`). To copy existing observation records from the old SQLite database, export them before switching the backend, then import them after creating the MySQL tables:
 
 ```powershell
 $env:DB_ENGINE = "sqlite"

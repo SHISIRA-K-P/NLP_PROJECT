@@ -1,16 +1,22 @@
 import logging
+import threading
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 from rest_framework import status, viewsets
-from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import APIException
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import LandslideObservation
 from .prediction import predict_landslide
 from .rag import RagConfigurationError, RagServiceError, ask_rag
-from .serializers import LandslideObservationSerializer, SafetyQuestionSerializer
+from .response_agent import ResponseAgentError, run_landslide_response_agent
+from .serializers import (
+    LandslideObservationSerializer,
+    SafetyQuestionSerializer,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,26 @@ class SafetyAssistantUnavailable(APIException):
     default_code = 'safety_assistant_unavailable'
 
 
+def _run_response_agent(observation_id):
+    try:
+        run_landslide_response_agent(observation_id)
+    except ResponseAgentError:
+        logger.exception(
+            'Response AI agent failed for observation %s.',
+            observation_id,
+        )
+
+
+def _start_response_agent(observation_id):
+    worker = threading.Thread(
+        target=_run_response_agent,
+        args=(observation_id,),
+        daemon=True,
+        name=f'landslide-response-agent-{observation_id}',
+    )
+    worker.start()
+
+
 class LandslideObservationViewSet(viewsets.ModelViewSet):
     queryset = LandslideObservation.objects.all()
     serializer_class = LandslideObservationSerializer
@@ -39,9 +65,18 @@ class LandslideObservationViewSet(viewsets.ModelViewSet):
             logger.exception('Could not load the landslide prediction model.')
             raise PredictionModelUnavailable(str(error)) from error
 
+    def _schedule_response_agent(self, observation):
+        transaction.on_commit(
+            lambda observation_id=observation.pk: _start_response_agent(
+                observation_id
+            )
+        )
+
     def perform_create(self, serializer):
         prediction = self._predict(serializer.validated_data)
-        serializer.save(**prediction)
+        observation = serializer.save(**prediction)
+        if observation.landslide_prediction == 'Yes':
+            self._schedule_response_agent(observation)
 
     def perform_update(self, serializer):
         observation = {
@@ -49,7 +84,9 @@ class LandslideObservationViewSet(viewsets.ModelViewSet):
             **serializer.validated_data,
         }
         prediction = self._predict(observation)
-        serializer.save(**prediction)
+        observation = serializer.save(**prediction)
+        if observation.landslide_prediction == 'Yes':
+            self._schedule_response_agent(observation)
 
 
 class SafetyAssistantView(APIView):
